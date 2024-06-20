@@ -1,0 +1,4 @@
+uroman-python
+tabulate
+colorama
+rich
