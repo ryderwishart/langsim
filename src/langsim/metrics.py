@@ -95,6 +95,28 @@ def calculate_morphological_complexity(rom_sample1: List[str], rom_sample2: List
         return 1.0  # Both samples are empty, consider them similar
     return len(tokens1 & tokens2) / len(tokens1 | tokens2)
 
+def calculate_overall_similarity(scores: Dict[str, float]) -> float:
+    weights = {
+        'Dist': 0.15, 'LenRat': 0.05, 'WSDiff': 0.05, 'WSKS': 0.05,
+        'PunctJS': 0.1, 'EntDiff': 0.1, 'LexSim': 0.2,
+        'CogProp': 0.15, 'MorphComp': 0.1, 'CogDist': 0.05
+    }
+    
+    normalized_scores = {
+        'Dist': 1 - abs(scores['Dist']),
+        'LenRat': 1 - scores['LenRat'],
+        'WSDiff': 1 - scores['WSDiff'],
+        'WSKS': 1 - scores['WSKS'],
+        'PunctJS': 1 - scores['PunctJS'],
+        'EntDiff': 1 - min(scores['EntDiff'], 1),
+        'LexSim': scores['LexSim'],
+        'CogProp': scores['CogProp'],
+        'MorphComp': scores['MorphComp'],
+        'CogDist': 1 - abs(scores['CogDist'])
+    }
+    
+    return sum(weights[metric] * normalized_scores[metric] for metric in weights)
+
 def compare_languages(sample1: List[str], sample2: List[str], max_token_length: int = 6, debug: bool = None) -> Dict[str, float]:
     # Use the global DEBUG_MODE if debug is not explicitly set
     debug = DEBUG_MODE if debug is None else debug
@@ -129,7 +151,8 @@ def compare_languages(sample1: List[str], sample2: List[str], max_token_length: 
         METRIC_DICT['Lexical similarity']: lexical_sim,
         METRIC_DICT['Cognate proportion']: cognate_prop,
         METRIC_DICT['Morphological complexity']: morph_complexity,
-        METRIC_DICT['Cognate-based distortion']: cognate_distortion
+        METRIC_DICT['Cognate-based distortion']: cognate_distortion,
+        METRIC_DICT['Overall Similarity']: calculate_overall_similarity(results)
     }
     
     if debug:

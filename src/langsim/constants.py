@@ -8,10 +8,11 @@ METRIC_NAMES: List[Tuple[str, str]] = [
     ('Whitespace KS statistic', 'WSKS'),
     ('Punctuation JS divergence', 'PunctJS'),
     ('Entropy diff', 'EntDiff'),
-    ('Lexical similarity', 'LexSim'),  # Added this line
+    ('Lexical similarity', 'LexSim'),
     ('Cognate proportion', 'CogProp'),
     ('Cognate-based distortion', 'CogDist'),
-    ('Morphological complexity', 'MorphComp')  # Added this line
+    ('Morphological complexity', 'MorphComp'),
+    ('Overall Similarity', 'OverallSim')
 ]
 
 METRIC_DICT: Dict[str, str] = dict(METRIC_NAMES)
