@@ -40,7 +40,20 @@ def calculate_punctuation_distribution(sample1: List[str], sample2: List[str]) -
     
     punct_class_dist1 = get_punct_dist(sample1)
     punct_class_dist2 = get_punct_dist(sample2)
-    return jensenshannon(list(punct_class_dist1.values()), list(punct_class_dist2.values()))
+    
+    # Check if both distributions are all zeros
+    if all(v == 0 for v in punct_class_dist1.values()) and all(v == 0 for v in punct_class_dist2.values()):
+        return 0.0  # Consider them identical if both have no punctuation
+    
+    # Use np.array and handle potential division by zero
+    dist1 = np.array(list(punct_class_dist1.values()))
+    dist2 = np.array(list(punct_class_dist2.values()))
+    
+    # Avoid division by zero
+    if np.sum(dist1) == 0 or np.sum(dist2) == 0:
+        return 1.0  # Maximum difference if one distribution is all zeros
+    
+    return jensenshannon(dist1, dist2)
 
 def calculate_entropy_diff(sample1: List[str], sample2: List[str]) -> float:
     def text_to_prob(text):
@@ -95,29 +108,45 @@ def calculate_morphological_complexity(rom_sample1: List[str], rom_sample2: List
         return 1.0  # Both samples are empty, consider them similar
     return len(tokens1 & tokens2) / len(tokens1 | tokens2)
 
-def calculate_overall_similarity(scores: Dict[str, float]) -> float:
-    weights = {
+def calculate_overall_similarity(scores: Dict[str, float], custom_weights: Dict[str, float] = None) -> float:
+    default_weights = {
         'Dist': 0.15, 'LenRat': 0.05, 'WSDiff': 0.05, 'WSKS': 0.05,
         'PunctJS': 0.1, 'EntDiff': 0.1, 'LexSim': 0.2,
         'CogProp': 0.15, 'MorphComp': 0.1, 'CogDist': 0.05
     }
     
+    if custom_weights is None:
+        weights = default_weights
+    else:
+        weights = {**default_weights, **custom_weights}
+    
+    if DEBUG_MODE:
+        print(f"DEBUG: Calculating overall similarity with weights: {weights}")
+    
     normalized_scores = {
         'Dist': 1 - abs(scores['Dist']),
-        'LenRat': 1 - scores['LenRat'],
+        'LenRat': 1 / (1 + scores['LenRat']),  # Changed to avoid negative values
         'WSDiff': 1 - scores['WSDiff'],
         'WSKS': 1 - scores['WSKS'],
-        'PunctJS': 1 - scores['PunctJS'],
-        'EntDiff': 1 - min(scores['EntDiff'], 1),
+        'PunctJS': 1 - scores['PunctJS'] if not np.isnan(scores['PunctJS']) else 1.0,  # Handle nan
+        'EntDiff': 1 / (1 + scores['EntDiff']),  # Changed to avoid negative values
         'LexSim': scores['LexSim'],
         'CogProp': scores['CogProp'],
         'MorphComp': scores['MorphComp'],
         'CogDist': 1 - abs(scores['CogDist'])
     }
     
-    return sum(weights[metric] * normalized_scores[metric] for metric in weights)
+    # Filter out nan values
+    valid_scores = {k: v for k, v in normalized_scores.items() if not np.isnan(v)}
+    valid_weights = {k: weights[k] for k in valid_scores}
+    
+    # Normalize weights
+    weight_sum = sum(valid_weights.values())
+    normalized_weights = {k: v / weight_sum for k, v in valid_weights.items()}
+    
+    return sum(normalized_weights[metric] * valid_scores[metric] for metric in valid_scores)
 
-def compare_languages(sample1: List[str], sample2: List[str], max_token_length: int = 6, debug: bool = None) -> Dict[str, float]:
+def compare_languages(sample1: List[str], sample2: List[str], max_token_length: int = 6, debug: bool = None, custom_weights: Dict[str, float] = None) -> Dict[str, float]:
     # Use the global DEBUG_MODE if debug is not explicitly set
     debug = DEBUG_MODE if debug is None else debug
     
@@ -152,8 +181,10 @@ def compare_languages(sample1: List[str], sample2: List[str], max_token_length: 
         METRIC_DICT['Cognate proportion']: cognate_prop,
         METRIC_DICT['Morphological complexity']: morph_complexity,
         METRIC_DICT['Cognate-based distortion']: cognate_distortion,
-        METRIC_DICT['Overall Similarity']: calculate_overall_similarity(results)
     }
+    
+    # Calculate overall similarity after creating the results dictionary
+    results[METRIC_DICT['Overall Similarity']] = calculate_overall_similarity(results, custom_weights)
     
     if debug:
         print("DEBUG: Calculated metrics:")
