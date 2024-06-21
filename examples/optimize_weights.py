@@ -1,7 +1,7 @@
 import sys
 import os
 import datetime
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Any
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from langsim import compare_languages
@@ -65,7 +65,7 @@ languages: Dict[str, List[str]] = {
         "Быть или не быть, вот в чем вопрос."
     ],
     "Japanese": [
-        "素早い茶色のキツネは怠けた犬を飛び越えます。",
+        "素早い茶色のキツネ怠けた犬を飛び越えます。",
         "千里の道も一歩から。",
         "生きるべきか死ぬべきか、それが問題だ。"
     ],
@@ -118,6 +118,12 @@ expected_outcomes: Dict[str, float] = {
     "EnglishALT1-EnglishALT2": 0.95
 }
 
+# Define the metric names
+METRIC_NAMES = [
+    'Dist', 'LenRat', 'WSDiff', 'WSKS', 'PunctJS', 'EntDiff', 
+    'LexSim', 'CogProp', 'MorphComp', 'CogDist'
+]
+
 @lru_cache(maxsize=None)
 def precompute_language_data(sample):
     words = set(' '.join(sample).split())
@@ -160,25 +166,12 @@ def display_results(results: Dict[str, float]) -> None:
     console = Console()
     console.print(table)
 
-def get_llm_suggestion(results: Dict[str, float], expected_outcomes: Dict[str, float], current_weights: Dict[str, float]) -> Dict[str, Dict[str, float]]:
+def get_llm_analysis_and_suggestion(results: Dict[str, float], expected_outcomes: Dict[str, float], current_weights: Dict[str, float], previous_results: Dict[str, float] = None) -> Dict[str, Any]:
     prompt = f"""
     You are an expert linguist and programmer. Analyze the following language comparison results and suggest updates to the weights used in the comparison algorithm.
 
     Metrics under consideration:
-        METRIC_NAMES: List[Tuple[str, str]] = [
-        ('Line', 'Line'),
-        ('Distortion', 'Dist'),
-        ('Length ratio std', 'LenRat'),
-        ('Whitespace ratio diff', 'WSDiff'),
-        ('Whitespace KS statistic', 'WSKS'),
-        ('Punctuation JS divergence', 'PunctJS'),
-        ('Entropy diff', 'EntDiff'),
-        ('Lexical similarity', 'LexSim'),
-        ('Cognate proportion', 'CogProp'),
-        ('Cognate-based distortion', 'CogDist'),
-        ('Morphological complexity', 'MorphComp'),
-            ('Overall Similarity', 'OverallSim')
-    ]
+    {', '.join(METRIC_NAMES)}
 
     Current weights: {json.dumps(current_weights, indent=2)}
 
@@ -186,25 +179,57 @@ def get_llm_suggestion(results: Dict[str, float], expected_outcomes: Dict[str, f
 
     Expected outcomes for key language pairs: {json.dumps(expected_outcomes, indent=2)}
 
-    Based on the differences between the results and expected outcomes, suggest updates to the weights. Provide your response as a JSON object with the weights to be updated. Only include weights that you think should be changed.
+    {"Previous iteration results: " + json.dumps(previous_results, indent=2) if previous_results else ""}
+
+    Please provide:
+    1. An analysis of the current results compared to the expected outcomes.
+    2. If applicable, a comparison with the previous iteration's results.
+    3. Observations on which language pairs are well-matched and which need improvement.
+    4. A detailed rationale for any suggested weight changes.
+    5. Suggested updates to the weights, if any.
 
     Your response should be in the following format:
     {{
+        "analysis": "Your analysis here",
+        "observations": "Your observations here",
+        "rationale": "Your rationale for changes here",
         "weight_updates": {{
             "weight_name": new_value,
             ...
-        }},
-        "explanation": "Your explanation here"
+        }}
     }}
     """
 
-    response = client.chat.completions.create(
-        model="gpt-4",
-        messages=[{"role": "system", "content": prompt}],
-        temperature=0.7,
-    )
-
-    return json.loads(response.choices[0].message.content)
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[{"role": "system", "content": prompt}],
+            temperature=0.7,
+        )
+        
+        content = response.choices[0].message.content
+        
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as e:
+            print(f"Error decoding JSON: {e}")
+            print("Raw response content:")
+            print(content)
+            return {
+                "analysis": "Error: Invalid JSON in LLM response",
+                "observations": "",
+                "rationale": "",
+                "weight_updates": {}
+            }
+    
+    except Exception as e:
+        print(f"Error calling OpenAI API: {e}")
+        return {
+            "analysis": f"Error: {str(e)}",
+            "observations": "",
+            "rationale": "",
+            "weight_updates": {}
+        }
 
 def main() -> None:
     openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -229,17 +254,24 @@ def main() -> None:
     print("Computing base metrics...")
     base_metrics = compute_base_metrics_parallel(languages)
 
+    previous_results = None
     for iteration in range(5):  # Run 5 iterations
         print(f"\nIteration {iteration + 1}")
         results = run_comparison(base_metrics, current_weights)
         display_results(results)
 
-        llm_suggestion = get_llm_suggestion(results, expected_outcomes, current_weights)
-        print("\nLLM Suggestion:")
-        print(json.dumps(llm_suggestion, indent=2))
+        llm_response = get_llm_analysis_and_suggestion(results, expected_outcomes, current_weights, previous_results)
+        print("\nLLM Analysis:")
+        print(llm_response['analysis'])
+        print("\nObservations:")
+        print(llm_response['observations'])
+        print("\nRationale for changes:")
+        print(llm_response['rationale'])
+        print("\nSuggested weight updates:")
+        print(json.dumps(llm_response['weight_updates'], indent=2))
 
         # Update weights
-        current_weights.update(llm_suggestion['weight_updates'])
+        current_weights.update(llm_response['weight_updates'])
         print("\nUpdated weights:")
         print(json.dumps(current_weights, indent=2))
 
@@ -248,9 +280,11 @@ def main() -> None:
             f.write(json.dumps({
                 "iteration": iteration + 1,
                 "results": results,
-                "llm_suggestion": llm_suggestion,
+                "llm_response": llm_response,
                 "updated_weights": current_weights
             }, indent=2) + "\n")
+
+        previous_results = results
 
 if __name__ == "__main__":
     main()
