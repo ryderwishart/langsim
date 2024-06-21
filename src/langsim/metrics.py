@@ -18,18 +18,21 @@ def cache_result(func):
     wrapper.cache = {}
     return wrapper
 
+@functools.lru_cache(maxsize=None)
+def precompute_language_data(sample):
+    words = set(' '.join(sample).split())
+    char_dist = np.bincount(np.frombuffer(' '.join(sample).encode(), dtype=np.uint8))
+    return words, char_dist
+
 @cache_result
 def calculate_whitespace_metrics(sample1: List[str], sample2: List[str]) -> Tuple[float, float]:
-    ws_ratio1 = sum(line.count(' ') for line in sample1) / max(sum(len(line) for line in sample1), 1)
-    ws_ratio2 = sum(line.count(' ') for line in sample2) / max(sum(len(line) for line in sample2), 1)
-    ws_ratio_diff = abs(ws_ratio1 - ws_ratio2)
+    ws1 = np.array([' ' in line for line in sample1]).mean()
+    ws2 = np.array([' ' in line for line in sample2]).mean()
+    ws_ratio_diff = abs(ws1 - ws2)
     
-    ws1 = np.array([c == ' ' for line in sample1 for c in line])
-    ws2 = np.array([c == ' ' for line in sample2 for c in line])
-    if len(ws1) == 0 or len(ws2) == 0:
-        ws_ks_stat = 1.0
-    else:
-        ws_ks_stat = ks_2samp(ws1, ws2).statistic
+    ws1 = np.concatenate([np.array([c == ' ' for c in line]) for line in sample1])
+    ws2 = np.concatenate([np.array([c == ' ' for c in line]) for line in sample2])
+    ws_ks_stat = ks_2samp(ws1, ws2).statistic
     return ws_ratio_diff, ws_ks_stat
 
 @cache_result
@@ -76,8 +79,8 @@ def calculate_entropy_diff(sample1: List[str], sample2: List[str]) -> float:
 
 @cache_result
 def calculate_lexical_similarity(sample1: List[str], sample2: List[str]) -> float:
-    words1 = set(' '.join(sample1).split())
-    words2 = set(' '.join(sample2).split())
+    words1, _ = precompute_language_data(tuple(sample1))
+    words2, _ = precompute_language_data(tuple(sample2))
     if not words1 and not words2:
         return 1.0
     return len(words1 & words2) / len(words1 | words2)
@@ -216,4 +219,3 @@ def compare_languages(sample1: List[str], sample2: List[str], max_token_length: 
             print(f"  {metric}: {value}")
     
     return results
-
